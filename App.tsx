@@ -5,40 +5,27 @@ import Loader from './components/Loader';
 import { UploadIcon, QrCodeIcon, DownloadIcon, LinkIcon, CheckCircleIcon, PaletteIcon, SettingsIcon, ExportIcon, ImportIcon } from './components/icons';
 import PreviewModal from './components/PreviewModal';
 
-const isPdfFile = (file: File): Promise<boolean> => {
+const isPdfFile = async (file: File): Promise<boolean> => {
     // Quick check for extension and type first for performance
     if (file.name.toLowerCase().endsWith('.pdf') || file.type === 'application/pdf') {
-        return Promise.resolve(true);
+        return true;
     }
 
     // If quick checks fail, read the file header (magic number) for robust validation
-    return new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = (e) => {
-            if (e.target?.readyState === FileReader.DONE) {
-                try {
-                    const arr = new Uint8Array(e.target.result as ArrayBuffer).subarray(0, 5);
-                    let header = "";
-                    for(let i = 0; i < arr.length; i++) {
-                       header += String.fromCharCode(arr[i]);
-                    }
-                    // Check for PDF magic number: %PDF-
-                    resolve(header === "%PDF-");
-                } catch (error) {
-                    resolve(false);
-                }
-            } else {
-                resolve(false);
-            }
-        };
-        reader.onerror = () => {
-           resolve(false);
-        };
-        
-        // Read the first 5 bytes of the file
-        const blob = file.slice(0, 5);
-        reader.readAsArrayBuffer(blob);
-    });
+    try {
+        // Use the more modern and reliable blob.arrayBuffer()
+        const buffer = await file.slice(0, 5).arrayBuffer();
+        const arr = new Uint8Array(buffer);
+        let header = "";
+        for(let i = 0; i < arr.length; i++) {
+           header += String.fromCharCode(arr[i]);
+        }
+        // Check for PDF magic number: %PDF-
+        return header === "%PDF-";
+    } catch (e) {
+        console.error("Error reading file header:", e);
+        return false;
+    }
 };
 
 
@@ -129,14 +116,24 @@ const App: React.FC = () => {
         setModifiedPdfUrl(null); // Reset download link on new selection
     };
 
+    const activeQrInfo = useMemo(() => {
+        if (!selectedQr) return null;
+        const pdf = processedPdfs.find(p => p.id === selectedQr.fileId);
+        return pdf?.qrCodes.find(q => q.id === selectedQr.qrId) || null;
+    }, [processedPdfs, selectedQr]);
+    
+    const activePdfFile = useMemo(() => {
+        if (!selectedQr) return null;
+        const pdf = processedPdfs.find(p => p.id === selectedQr.fileId);
+        return pdf?.file || null;
+    }, [processedPdfs, selectedQr]);
+
+
     useEffect(() => {
-        if (selectedQr) {
-            const qr = activeQrInfo;
-            if (qr) {
-                setCustomization(prev => ({ ...prev, size: Math.round(qr.location.width) }));
-            }
+        if (activeQrInfo) {
+            setCustomization(prev => ({ ...prev, size: Math.round(activeQrInfo.location.width) }));
         }
-    }, [selectedQr]);
+    }, [activeQrInfo]);
     
 
     const handlePreview = async () => {
@@ -210,17 +207,10 @@ const App: React.FC = () => {
         setIsLoading(false);
         setError(null);
         setModifiedPdfUrl(null);
-        if (document.getElementById('pdf-upload')) {
-            (document.getElementById('pdf-upload') as HTMLInputElement).value = "";
+        if (fileInputRef.current) {
+            fileInputRef.current.value = "";
         }
     };
-    
-    const { activePdfFile, activeQrInfo } = useMemo(() => {
-        if (!selectedQr) return { activePdfFile: null, activeQrInfo: null };
-        const pdf = processedPdfs.find(p => p.id === selectedQr.fileId);
-        const qr = pdf?.qrCodes.find(q => q.id === selectedQr.qrId);
-        return { activePdfFile: pdf?.file || null, activeQrInfo: qr || null };
-    }, [processedPdfs, selectedQr]);
 
     const handleExportSettings = () => {
         const settingsStr = JSON.stringify(customization, null, 2);
@@ -431,6 +421,8 @@ const App: React.FC = () => {
                     onConfirm={handleConfirmReplace}
                     onCancel={() => setIsPreviewModalOpen(false)}
                     isProcessing={isReplacing}
+                    qrLocation={activeQrInfo.location}
+                    pageDimensions={{width: activeQrInfo.pageWidth, height: activeQrInfo.pageHeight}}
                 />
              )}
             <header className="text-center mb-8">
