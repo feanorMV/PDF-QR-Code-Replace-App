@@ -1,8 +1,8 @@
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { QrCodeInfo, ProcessedPdf, QrCodeCustomization } from './types';
 import { extractQrCodesFromPdf, replaceQrCodeInPdf, generatePreviewPageAsDataUrl } from './services/pdf';
 import Loader from './components/Loader';
-import { UploadIcon, QrCodeIcon, DownloadIcon, LinkIcon, CheckCircleIcon, PaletteIcon, SettingsIcon } from './components/icons';
+import { UploadIcon, QrCodeIcon, DownloadIcon, LinkIcon, CheckCircleIcon, PaletteIcon, SettingsIcon, ExportIcon, ImportIcon } from './components/icons';
 import PreviewModal from './components/PreviewModal';
 
 const App: React.FC = () => {
@@ -23,6 +23,8 @@ const App: React.FC = () => {
     const [isPreviewModalOpen, setIsPreviewModalOpen] = useState<boolean>(false);
     const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
     const [isReplacing, setIsReplacing] = useState(false);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
 
     const handleFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
         const files = event.target.files;
@@ -37,7 +39,7 @@ const App: React.FC = () => {
         setLoadingText(`Обробка ${files.length} файлів...`);
 
         try {
-            const pdfFiles = Array.from(files).filter(file => file.type === 'application/pdf');
+            const pdfFiles = Array.from(files).filter(file => file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'));
 
             if (pdfFiles.length === 0) {
                 setError('У вашому виборі не знайдено файлів PDF. Будь ласка, спробуйте ще раз.');
@@ -135,7 +137,7 @@ const App: React.FC = () => {
         setNewUrl(url);
     
         if (url.trim() === '') {
-            setUrlError(null);
+            setUrlError('Посилання не може бути порожнім.');
             return;
         }
         
@@ -146,7 +148,6 @@ const App: React.FC = () => {
     
         try {
             const parsedUrl = new URL(urlToCheck);
-            // Basic check to ensure hostname has a TLD
             if (parsedUrl.hostname && parsedUrl.hostname.includes('.') && parsedUrl.hostname.split('.').pop()!.length > 1) {
                  setUrlError(null);
             } else {
@@ -178,6 +179,49 @@ const App: React.FC = () => {
         return { activePdfFile: pdf?.file || null, activeQrInfo: qr || null };
     }, [processedPdfs, selectedQr]);
 
+    const handleExportSettings = () => {
+        const settingsStr = JSON.stringify(customization, null, 2);
+        const blob = new Blob([settingsStr], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "qr-settings.json";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
+
+    const handleImportSettings = () => {
+        fileInputRef.current?.click();
+    };
+
+    const handleSettingsFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const text = e.target?.result;
+                if (typeof text !== 'string') throw new Error("File is not text");
+                const settings = JSON.parse(text);
+                // Basic validation
+                if (settings.color && settings.backgroundColor && typeof settings.size === 'number') {
+                    setCustomization(settings);
+                } else {
+                    setError("Невірний формат файлу налаштувань.");
+                }
+            } catch (err) {
+                setError("Не вдалося прочитати файл налаштувань.");
+                console.error(err);
+            }
+        };
+        reader.readAsText(file);
+        // Reset file input
+        event.target.value = '';
+    };
+
     const renderFileUpload = () => (
         <div className="w-full max-w-lg">
             <label htmlFor="pdf-upload" className="flex flex-col items-center justify-center w-full h-64 bg-brand-surface border-2 border-brand-secondary border-dashed rounded-lg cursor-pointer hover:bg-brand-secondary transition-colors">
@@ -193,7 +237,18 @@ const App: React.FC = () => {
 
     const renderQrCustomization = () => (
         <div className="mt-6 space-y-4">
-            <h3 className="text-lg font-semibold flex items-center gap-2"><SettingsIcon />Налаштування QR-коду</h3>
+            <div className="flex justify-between items-center">
+                 <h3 className="text-lg font-semibold flex items-center gap-2"><SettingsIcon />Налаштування QR-коду</h3>
+                 <div className="flex items-center gap-2">
+                    <button onClick={handleImportSettings} title="Імпортувати налаштування" className="p-2 text-brand-text-dark hover:text-brand-primary transition-colors">
+                        <ImportIcon />
+                    </button>
+                    <input type="file" ref={fileInputRef} onChange={handleSettingsFileChange} accept=".json" className="hidden" />
+                    <button onClick={handleExportSettings} title="Експортувати налаштування" className="p-2 text-brand-text-dark hover:text-brand-primary transition-colors">
+                        <ExportIcon />
+                    </button>
+                 </div>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                     <label htmlFor="qr-color" className="block text-sm font-medium text-brand-text-light mb-1">Колір</label>
@@ -216,7 +271,7 @@ const App: React.FC = () => {
                     <input id="qr-size" type="range" min="20" max="500" value={customization.size} onChange={e => setCustomization({...customization, size: parseInt(e.target.value, 10)})} className="w-full h-2 bg-brand-secondary rounded-lg appearance-none cursor-pointer"/>
                     <input type="number" value={customization.size} onChange={e => {
                         const newSize = parseInt(e.target.value, 10);
-                        if (!isNaN(newSize)) {
+                        if (!isNaN(newSize) && newSize > 0) {
                             setCustomization({ ...customization, size: newSize });
                         }
                     }} className="w-20 bg-brand-bg border border-brand-secondary rounded-lg text-center" />
@@ -327,9 +382,10 @@ const App: React.FC = () => {
 
     return (
         <div className="min-h-screen bg-brand-bg flex flex-col items-center p-4 sm:p-8">
-             {isPreviewModalOpen && (
+             {isPreviewModalOpen && activeQrInfo && (
                 <PreviewModal 
                     imageUrl={previewImageUrl}
+                    // FIX: Removed qrLocation prop as it's not defined in PreviewModalProps
                     onConfirm={handleConfirmReplace}
                     onCancel={() => setIsPreviewModalOpen(false)}
                     isProcessing={isReplacing}

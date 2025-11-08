@@ -63,3 +63,19 @@ export const SettingsIcon = ({ className }: { className?: string }) => (
         <circle cx="12" cy="12" r="3"/>
     </svg>
 );
+{/* FIX: Add missing ImportIcon and ExportIcon to fix module import errors. */}
+export const ExportIcon = ({ className }: { className?: string }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <path d="M12 15V3" />
+        <path d="m19 8-7-7-7 7" />
+        <path d="M3 15v2a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-2" />
+    </svg>
+);
+
+export const ImportIcon = ({ className }: { className?: string }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <path d="M12 3v12" />
+        <path d="m19 10-7 7-7-7" />
+        <path d="M3 18v2a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-2" />
+    </svg>
+);
