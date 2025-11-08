@@ -21,7 +21,7 @@ export interface QrCodeCustomization {
     size: number;
 }
 
-export interface ProcessedPdf {
+export interface ProcessedFile {
     file: File;
     id: string;
     qrCodes: QrCodeInfo[];

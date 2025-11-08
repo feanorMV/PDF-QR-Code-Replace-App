@@ -218,3 +218,150 @@ export const generatePreviewPageAsDataUrl = async (
 
     return canvas.toDataURL('image/png');
 };
+
+// --- Image Processing Functions ---
+
+const loadImageFromFile = (file: File): Promise<HTMLImageElement> => {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+        img.onload = () => {
+            URL.revokeObjectURL(url);
+            resolve(img);
+        };
+        img.onerror = (err) => {
+            URL.revokeObjectURL(url);
+            reject(err);
+        };
+        img.src = url;
+    });
+};
+
+export const extractQrCodesFromImage = async (file: File): Promise<QrCodeInfo[]> => {
+    if (!window.ZXing) {
+        throw new Error('Image processing library (ZXing) not loaded.');
+    }
+    
+    const codeReader = new window.ZXing.BrowserQRCodeReader();
+    const image = await loadImageFromFile(file);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+        throw new Error('Could not create canvas context');
+    }
+    ctx.drawImage(image, 0, 0);
+
+    const allQrCodes: QrCodeInfo[] = [];
+
+    while (true) {
+        try {
+            const result = codeReader.decodeFromCanvas(canvas);
+            const resultPoints = result.getResultPoints();
+            
+            const minX = Math.min(...resultPoints.map(p => p.getX()));
+            const maxX = Math.max(...resultPoints.map(p => p.getX()));
+            const minY = Math.min(...resultPoints.map(p => p.getY()));
+            const maxY = Math.max(...resultPoints.map(p => p.getY()));
+            
+            const qrWidth = maxX - minX;
+            const qrHeight = maxY - minY;
+
+            const qrCanvas = document.createElement('canvas');
+            qrCanvas.width = qrWidth;
+            qrCanvas.height = qrHeight;
+            const qrCtx = qrCanvas.getContext('2d');
+            if (qrCtx) {
+                qrCtx.drawImage(canvas, minX, minY, qrWidth, qrHeight, 0, 0, qrWidth, qrHeight);
+                allQrCodes.push({
+                    id: `${1}-${minX}-${minY}`,
+                    data: result.getText(),
+                    imageDataUrl: qrCanvas.toDataURL(),
+                    location: { x: minX, y: minY, width: qrWidth, height: qrHeight },
+                    pageNumber: 1,
+                    pageWidth: image.width,
+                    pageHeight: image.height,
+                });
+            }
+            
+            ctx.fillStyle = 'white';
+            ctx.fillRect(minX, minY, qrWidth, qrHeight);
+
+        } catch (err) {
+            if (err instanceof window.ZXing.NotFoundException) {
+                break;
+            } else {
+                console.error("An unexpected error occurred during QR code decoding:", err);
+                break;
+            }
+        }
+    }
+    return allQrCodes;
+};
+
+const modifyImage = async (
+    file: File,
+    qrToReplace: QrCodeInfo,
+    newUrl: string,
+    customization: QrCodeCustomization,
+    scale: number
+): Promise<HTMLCanvasElement> => {
+    if (!window.QRCode) {
+        throw new Error('QRCode generation library not loaded.');
+    }
+
+    const image = await loadImageFromFile(file);
+    const newQrDataUrl = await generateQrCodeDataUrl(newUrl, customization, 2);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width * scale;
+    canvas.height = image.height * scale;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Could not get canvas context');
+
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+    const newQrImg = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = newQrDataUrl;
+    });
+
+    ctx.drawImage(
+        newQrImg,
+        qrToReplace.location.x * scale,
+        qrToReplace.location.y * scale,
+        customization.size * scale,
+        customization.size * scale
+    );
+
+    return canvas;
+}
+
+export const generatePreviewImageAsDataUrl = async (
+    file: File,
+    qrToReplace: QrCodeInfo,
+    newUrl: string,
+    customization: QrCodeCustomization
+): Promise<string> => {
+    const canvas = await modifyImage(file, qrToReplace, newUrl, customization, 1.5);
+    return canvas.toDataURL('image/png');
+};
+
+
+export const replaceQrCodeInImage = async (
+    file: File,
+    qrToReplace: QrCodeInfo,
+    newUrl: string,
+    customization: QrCodeCustomization
+): Promise<string> => {
+    const canvas = await modifyImage(file, qrToReplace, newUrl, customization, 1.0);
+    const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, file.type, 0.95));
+    if (!blob) {
+        throw new Error("Failed to create blob from canvas");
+    }
+    return URL.createObjectURL(blob);
+};

@@ -1,63 +1,26 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { QrCodeInfo, ProcessedPdf, QrCodeCustomization } from './types';
-import { extractQrCodesFromPdf, replaceQrCodeInPdf, generatePreviewPageAsDataUrl } from './services/pdf';
+import { QrCodeInfo, ProcessedFile, QrCodeCustomization } from './types';
+import { 
+    extractQrCodesFromPdf, 
+    replaceQrCodeInPdf, 
+    generatePreviewPageAsDataUrl,
+    extractQrCodesFromImage,
+    replaceQrCodeInImage,
+    generatePreviewImageAsDataUrl
+} from './services/pdf';
 import Loader from './components/Loader';
 import { UploadIcon, QrCodeIcon, DownloadIcon, LinkIcon, CheckCircleIcon, PaletteIcon, SettingsIcon, ExportIcon, ImportIcon } from './components/icons';
 import PreviewModal from './components/PreviewModal';
 
-const isPdfFile = (file: File): Promise<boolean> => {
-    return new Promise((resolve) => {
-        // A minimal check for file size to avoid errors with empty files.
-        if (file.size < 5) {
-            return resolve(false);
-        }
-
-        const reader = new FileReader();
-
-        reader.onload = (event: ProgressEvent<FileReader>) => {
-            try {
-                const result = event.target?.result;
-                // Ensure we have an ArrayBuffer.
-                if (result instanceof ArrayBuffer) {
-                    const view = new Uint8Array(result);
-                    // Check for the byte sequence of "%PDF-" (ASCII: 37, 80, 68, 70, 45).
-                    if (view[0] === 37 && view[1] === 80 && view[2] === 68 && view[3] === 70 && view[4] === 45) {
-                        resolve(true);
-                    } else {
-                        resolve(false);
-                    }
-                } else {
-                    resolve(false);
-                }
-            } catch (e) {
-                // In case of any unexpected error during processing, resolve as false.
-                console.error("Error processing file header:", e);
-                resolve(false);
-            }
-        };
-
-        reader.onerror = () => {
-            // Handle cases where the file cannot be read at all.
-            console.error("FileReader could not read the file slice.");
-            resolve(false);
-        };
-        
-        // We only need the first 5 bytes to check the magic number.
-        const blob = file.slice(0, 5);
-        reader.readAsArrayBuffer(blob);
-    });
-};
-
-
 const App: React.FC = () => {
-    const [processedPdfs, setProcessedPdfs] = useState<ProcessedPdf[]>([]);
+    const [processedFiles, setProcessedFiles] = useState<ProcessedFile[]>([]);
     const [selectedQr, setSelectedQr] = useState<{ fileId: string; qrId: string } | null>(null);
     const [newUrl, setNewUrl] = useState<string>('');
     const [urlError, setUrlError] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [loadingText, setLoadingText] = useState<string>('');
     const [error, setError] = useState<string | null>(null);
-    const [modifiedPdfUrl, setModifiedPdfUrl] = useState<string | null>(null);
+    const [modifiedFileUrl, setModifiedFileUrl] = useState<string | null>(null);
 
     const [customization, setCustomization] = useState<QrCodeCustomization>({
         color: '#000000',
@@ -74,59 +37,52 @@ const App: React.FC = () => {
     const handleFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
         const files = event.target.files;
         if (!files || files.length === 0) {
-            setError('Будь ласка, виберіть хоча б один PDF файл.');
             return;
         }
 
         resetState();
         setError(null);
         setIsLoading(true);
-        setLoadingText(`Перевірка ${files.length} файлів...`);
+        const fileList = Array.from(files);
+        setLoadingText(`Обробка ${fileList.length} файл(ів)...`);
 
         try {
-            const fileList = Array.from(files);
-            
-            const filterResults = await Promise.all(fileList.map(isPdfFile));
-            const pdfFiles = fileList.filter((_, index) => filterResults[index]);
+            const processPromises = fileList.map(file => {
+                const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+                const isImage = file.type.startsWith('image/');
 
+                const promise = isPdf 
+                    ? extractQrCodesFromPdf(file) 
+                    : isImage
+                    ? extractQrCodesFromImage(file)
+                    : Promise.reject(new Error(`Unsupported file type: ${file.name}`));
 
-            if (pdfFiles.length === 0) {
-                setError('У вашому виборі не знайдено файлів PDF. Будь ласка, спробуйте ще раз.');
-                setIsLoading(false);
-                return;
-            }
-            
-            setLoadingText(`Обробка ${pdfFiles.length} PDF файлів...`);
-
-            const outcomes = await Promise.allSettled(
-                pdfFiles.map(file => 
-                    extractQrCodesFromPdf(file).then(qrCodes => ({ file, qrCodes, id: `${file.name}-${file.lastModified}` }))
-                )
-            );
-            
-            const successfulResults: ProcessedPdf[] = [];
-            const failedFiles: File[] = [];
-
-            outcomes.forEach((outcome, index) => {
-                if (outcome.status === 'fulfilled') {
-                    successfulResults.push(outcome.value);
-                } else {
-                    console.error(`Error processing ${pdfFiles[index].name}:`, outcome.reason);
-                    failedFiles.push(pdfFiles[index]);
-                }
+                return promise.then(qrCodes => ({ file, qrCodes, id: `${file.name}-${file.lastModified}` }));
             });
+            
+            const results = await Promise.all(processPromises);
+            
+            setProcessedFiles(results);
+            
+            if (results.every(res => res.qrCodes.length === 0)) {
+                setError("QR-кодів не знайдено в жодному з вибраних файлів.");
+            }
 
-            if (successfulResults.length === 0) {
-                setError('Не вдалося обробити жодного PDF файлу. Переконайтеся, що файли не пошкоджено.');
-            } else {
-                setProcessedPdfs(successfulResults);
-                if (failedFiles.length > 0) {
-                    setError(`Попередження: Не вдалося обробити ${failedFiles.length} файл(и).`);
+        } catch (err: any) {
+            console.error("File processing failed:", err);
+            let errorMessage = 'Сталася неочікувана помилка під час обробки файлів.';
+            if (err && err.message) {
+                 if (err.message.includes('not loaded')) {
+                    errorMessage = 'Помилка ініціалізації. Будь ласка, перевірте з\'єднання з Інтернетом та оновіть сторінку.';
+                } else if (err.message.toLowerCase().includes('invalid pdf')) {
+                    errorMessage = 'Один або кілька файлів не є дійсними PDF документами.';
+                } else if (err.message.includes('Unsupported file type')) {
+                    errorMessage = 'Один або кілька файлів мають непідтримуваний тип.';
+                } else {
+                    errorMessage = `Виникла помилка: ${err.message}`;
                 }
             }
-        } catch (err) {
-            console.error(err);
-            setError('Сталася неочікувана помилка під час обробки файлів.');
+            setError(errorMessage);
         } finally {
             setIsLoading(false);
         }
@@ -134,37 +90,40 @@ const App: React.FC = () => {
 
     const handleSelectQr = (fileId: string, qrId: string) => {
         setSelectedQr({ fileId, qrId });
-        setModifiedPdfUrl(null); // Reset download link on new selection
+        setModifiedFileUrl(null);
     };
 
-    const activeQrInfo = useMemo(() => {
+    const activeFileInfo = useMemo(() => {
         if (!selectedQr) return null;
-        const pdf = processedPdfs.find(p => p.id === selectedQr.fileId);
-        return pdf?.qrCodes.find(q => q.id === selectedQr.qrId) || null;
-    }, [processedPdfs, selectedQr]);
+        const fileContainer = processedFiles.find(p => p.id === selectedQr.fileId);
+        return fileContainer?.qrCodes.find(q => q.id === selectedQr.qrId) || null;
+    }, [processedFiles, selectedQr]);
     
-    const activePdfFile = useMemo(() => {
+    const activeFile = useMemo(() => {
         if (!selectedQr) return null;
-        const pdf = processedPdfs.find(p => p.id === selectedQr.fileId);
-        return pdf?.file || null;
-    }, [processedPdfs, selectedQr]);
+        const fileContainer = processedFiles.find(p => p.id === selectedQr.fileId);
+        return fileContainer?.file || null;
+    }, [processedFiles, selectedQr]);
 
 
     useEffect(() => {
-        if (activeQrInfo) {
-            setCustomization(prev => ({ ...prev, size: Math.round(activeQrInfo.location.width) }));
+        if (activeFileInfo) {
+            setCustomization(prev => ({ ...prev, size: Math.round(activeFileInfo.location.width) }));
         }
-    }, [activeQrInfo]);
+    }, [activeFileInfo]);
     
 
     const handlePreview = async () => {
-        if (!activePdfFile || !activeQrInfo || !newUrl || urlError) return;
+        if (!activeFile || !activeFileInfo || !newUrl || urlError) return;
         
         setIsPreviewModalOpen(true);
-        setPreviewImageUrl(null); // show loader in modal
+        setPreviewImageUrl(null);
 
         try {
-            const url = await generatePreviewPageAsDataUrl(activePdfFile, activeQrInfo, newUrl, customization);
+            const isPdf = activeFile.type === 'application/pdf';
+            const url = isPdf
+                ? await generatePreviewPageAsDataUrl(activeFile, activeFileInfo, newUrl, customization)
+                : await generatePreviewImageAsDataUrl(activeFile, activeFileInfo, newUrl, customization);
             setPreviewImageUrl(url);
         } catch (err) {
             console.error(err);
@@ -183,17 +142,22 @@ const App: React.FC = () => {
     };
 
     const handleConfirmReplace = async () => {
-        if (!activePdfFile || !activeQrInfo || !newUrl) return;
+        if (!activeFile || !activeFileInfo || !newUrl) return;
 
         setIsReplacing(true);
-        setLoadingText('Заміна QR-коду та створення нового PDF...');
+        setLoadingText('Заміна QR-коду та створення нового файлу...');
         setError(null);
-        setModifiedPdfUrl(null);
+        setModifiedFileUrl(null);
 
         try {
-            const url = await replaceQrCodeInPdf(activePdfFile, activeQrInfo, newUrl, customization);
-            setModifiedPdfUrl(url);
-            const filename = `modified_${activePdfFile?.name || 'document.pdf'}`;
+            const isPdf = activeFile.type === 'application/pdf';
+            const url = isPdf
+                ? await replaceQrCodeInPdf(activeFile, activeFileInfo, newUrl, customization)
+                : await replaceQrCodeInImage(activeFile, activeFileInfo, newUrl, customization);
+            
+            setModifiedFileUrl(url);
+            const extension = activeFile.name.split('.').pop() || 'file';
+            const filename = `modified_${activeFile.name.replace(/\.[^/.]+$/, "")}.${extension}`;
             triggerDownload(url, filename);
         } catch (err) {
             console.error(err);
@@ -232,13 +196,13 @@ const App: React.FC = () => {
 
 
     const resetState = () => {
-        setProcessedPdfs([]);
+        setProcessedFiles([]);
         setSelectedQr(null);
         setNewUrl('');
         setUrlError(null);
         setIsLoading(false);
         setError(null);
-        setModifiedPdfUrl(null);
+        setModifiedFileUrl(null);
         if (fileInputRef.current) {
             fileInputRef.current.value = "";
         }
@@ -271,7 +235,6 @@ const App: React.FC = () => {
                 const text = e.target?.result;
                 if (typeof text !== 'string') throw new Error("File is not text");
                 const settings = JSON.parse(text);
-                // Basic validation
                 if (settings.color && settings.backgroundColor && typeof settings.size === 'number') {
                     setCustomization(settings);
                 } else {
@@ -283,19 +246,18 @@ const App: React.FC = () => {
             }
         };
         reader.readAsText(file);
-        // Reset file input
         event.target.value = '';
     };
 
     const renderFileUpload = () => (
         <div className="w-full max-w-lg">
-            <label htmlFor="pdf-upload" className="flex flex-col items-center justify-center w-full h-64 bg-brand-surface border-2 border-brand-secondary border-dashed rounded-lg cursor-pointer hover:bg-brand-secondary transition-colors">
+            <label htmlFor="file-upload" className="flex flex-col items-center justify-center w-full h-64 bg-brand-surface border-2 border-brand-secondary border-dashed rounded-lg cursor-pointer hover:bg-brand-secondary transition-colors">
                 <div className="flex flex-col items-center justify-center pt-5 pb-6">
                     <UploadIcon className="w-10 h-10 mb-3 text-brand-text-dark" />
                     <p className="mb-2 text-sm text-brand-text-dark"><span className="font-semibold text-brand-primary">Натисніть, щоб завантажити</span> або перетягніть</p>
-                    <p className="text-xs text-brand-text-dark">Один або кілька PDF файлів</p>
+                    <p className="text-xs text-brand-text-dark">PDF, JPG, або PNG файли</p>
                 </div>
-                <input ref={fileInputRef} id="pdf-upload" type="file" className="hidden" accept=".pdf,application/pdf" multiple onChange={handleFileChange} />
+                <input ref={fileInputRef} id="file-upload" type="file" className="hidden" accept=".pdf,application/pdf,.jpg,.jpeg,.png,image/jpeg,image/png" multiple onChange={handleFileChange} />
             </label>
         </div>
     );
@@ -347,9 +309,9 @@ const App: React.FC = () => {
 
     const renderContent = () => {
         if (isLoading) return <Loader text={loadingText} />;
-        if (processedPdfs.length === 0 && !error) return renderFileUpload();
+        if (processedFiles.length === 0 && !error) return renderFileUpload();
 
-        if (processedPdfs.length === 0 && error) {
+        if (processedFiles.length === 0 && error) {
             return (
                  <div className="text-center">
                     <div className="w-full max-w-lg p-4 mb-4 text-center text-red-300 bg-red-900/50 border border-red-500 rounded-lg">{error}</div>
@@ -361,12 +323,11 @@ const App: React.FC = () => {
 
         return (
             <div className="w-full flex flex-col lg:flex-row gap-8">
-                {/* Files & QR Codes List */}
                 <div className="w-full lg:w-1/3 bg-brand-surface p-6 rounded-lg shadow-lg">
                     <h2 className="text-xl font-bold mb-4 flex items-center gap-2"><QrCodeIcon /> Знайдені QR-коди</h2>
                     <div className="space-y-2 max-h-[70vh] overflow-y-auto pr-2">
-                        {processedPdfs.map(({ file, qrCodes, id: fileId }) => (
-                            <details key={fileId} open={processedPdfs.length === 1} className="bg-black/20 rounded-lg">
+                        {processedFiles.map(({ file, qrCodes, id: fileId }) => (
+                            <details key={fileId} open={processedFiles.length === 1} className="bg-black/20 rounded-lg">
                                 <summary className="font-semibold p-3 cursor-pointer hover:bg-brand-secondary/50 rounded-t-lg">{file.name} ({qrCodes.length})</summary>
                                 <div className="p-2 space-y-2">
                                     {qrCodes.map(qr => (
@@ -388,14 +349,13 @@ const App: React.FC = () => {
                     </div>
                 </div>
 
-                {/* Modification Panel */}
                 <div className="w-full lg:w-2/3 bg-brand-surface p-6 rounded-lg shadow-lg">
-                    {activeQrInfo ? (
+                    {activeFileInfo ? (
                         <div>
                             <h2 className="text-xl font-bold mb-4">Замінити вибраний QR-код</h2>
                              <div className="mb-4 p-4 border border-brand-secondary rounded-lg bg-black/20">
                                 <p className="text-sm text-brand-text-dark mb-1">Поточні дані:</p>
-                                <p className="font-mono text-brand-primary break-all">{activeQrInfo.data}</p>
+                                <p className="font-mono text-brand-primary break-all">{activeFileInfo.data}</p>
                             </div>
                             
                             <div className="space-y-4">
@@ -418,14 +378,14 @@ const App: React.FC = () => {
                                 </button>
                             </div>
 
-                            {modifiedPdfUrl && (
+                            {modifiedFileUrl && (
                                 <div className="mt-8 p-4 bg-green-900/30 border border-green-500 rounded-lg text-center">
                                     <div className="flex items-center justify-center gap-2 mb-2">
                                         <CheckCircleIcon className="text-green-400" />
-                                        <h3 className="text-lg font-semibold text-green-300">PDF успішно оновлено!</h3>
+                                        <h3 className="text-lg font-semibold text-green-300">Файл успішно оновлено!</h3>
                                     </div>
                                      <p className="text-sm text-green-200 mb-3">Завантаження почалося автоматично.</p>
-                                    <a href={modifiedPdfUrl} download={`modified_${activePdfFile?.name || 'document.pdf'}`}
+                                    <a href={modifiedFileUrl} download={`modified_${activeFile?.name || 'document.file'}`}
                                        className="inline-flex items-center justify-center gap-2 mt-2 px-6 py-2 bg-green-600 text-white font-bold rounded-lg hover:bg-green-500 transition-colors">
                                         <DownloadIcon />
                                         Завантажити знову
@@ -438,7 +398,7 @@ const App: React.FC = () => {
                         <div className="flex flex-col items-center justify-center h-full text-center">
                             <QrCodeIcon className="w-16 h-16 text-brand-secondary" />
                             <p className="mt-4 text-lg text-brand-text-dark">Виберіть QR-код зі списку, щоб почати.</p>
-                             {processedPdfs.some(p => p.qrCodes.length === 0) && <p className="mt-2 text-sm text-brand-text-dark/70">У деяких файлах не знайдено QR-кодів.</p>}
+                             {processedFiles.some(p => p.qrCodes.length === 0) && <p className="mt-2 text-sm text-brand-text-dark/70">У деяких файлах не знайдено QR-кодів.</p>}
                         </div>
                     )}
                 </div>
@@ -448,27 +408,27 @@ const App: React.FC = () => {
 
     return (
         <div className="min-h-screen bg-brand-bg flex flex-col items-center p-4 sm:p-8">
-             {isPreviewModalOpen && activeQrInfo && (
+             {isPreviewModalOpen && activeFileInfo && (
                 <PreviewModal 
                     imageUrl={previewImageUrl}
                     onConfirm={handleConfirmReplace}
                     onCancel={() => setIsPreviewModalOpen(false)}
                     isProcessing={isReplacing}
-                    qrLocation={activeQrInfo.location}
-                    pageDimensions={{width: activeQrInfo.pageWidth, height: activeQrInfo.pageHeight}}
+                    qrLocation={activeFileInfo.location}
+                    pageDimensions={{width: activeFileInfo.pageWidth, height: activeFileInfo.pageHeight}}
                 />
              )}
             <header className="text-center mb-8">
-                <h1 className="text-3xl sm:text-4xl font-bold text-brand-text-light">Заміна QR-кодів у PDF</h1>
-                <p className="text-md text-brand-text-dark mt-2">Завантажте PDF, налаштуйте, перегляньте та замініть QR-коди.</p>
+                <h1 className="text-3xl sm:text-4xl font-bold text-brand-text-light">Заміна QR-кодів у PDF та Зображеннях</h1>
+                <p className="text-md text-brand-text-dark mt-2">Завантажте файли, налаштуйте, перегляньте та замініть QR-коди.</p>
             </header>
             
             <main className="w-full max-w-7xl flex-grow flex flex-col items-center justify-center">
-                {error && !isLoading && processedPdfs.length > 0 && <div className="w-full max-w-4xl p-3 mb-4 text-center text-yellow-300 bg-yellow-900/50 border border-yellow-500 rounded-lg">{error}</div>}
+                {error && !isLoading && processedFiles.length > 0 && <div className="w-full max-w-4xl p-3 mb-4 text-center text-yellow-300 bg-yellow-900/50 border border-yellow-500 rounded-lg">{error}</div>}
                 {renderContent()}
             </main>
             
-            {(processedPdfs.length > 0 || error) && (
+            {(processedFiles.length > 0 || error) && (
                  <button onClick={resetState} className="mt-8 text-sm text-brand-text-dark hover:text-brand-primary underline transition-colors">
                     Почати знову з новими файлами
                  </button>
