@@ -48,6 +48,7 @@ const App: React.FC = () => {
     const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
     const [isReplacing, setIsReplacing] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const settingsFileInputRef = useRef<HTMLInputElement>(null);
 
 
     const handleFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -151,6 +152,15 @@ const App: React.FC = () => {
             setIsPreviewModalOpen(false);
         }
     };
+    
+    const triggerDownload = (url: string, filename: string) => {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    };
 
     const handleConfirmReplace = async () => {
         if (!activePdfFile || !activeQrInfo || !newUrl) return;
@@ -163,6 +173,8 @@ const App: React.FC = () => {
         try {
             const url = await replaceQrCodeInPdf(activePdfFile, activeQrInfo, newUrl, customization);
             setModifiedPdfUrl(url);
+            const filename = `modified_${activePdfFile?.name || 'document.pdf'}`;
+            triggerDownload(url, filename);
         } catch (err) {
             console.error(err);
             setError('Не вдалося замінити QR-код. Спробуйте ще раз.');
@@ -226,7 +238,7 @@ const App: React.FC = () => {
     };
 
     const handleImportSettings = () => {
-        fileInputRef.current?.click();
+        settingsFileInputRef.current?.click();
     };
 
     const handleSettingsFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -263,7 +275,7 @@ const App: React.FC = () => {
                     <p className="mb-2 text-sm text-brand-text-dark"><span className="font-semibold text-brand-primary">Натисніть, щоб завантажити</span> або перетягніть</p>
                     <p className="text-xs text-brand-text-dark">Один або кілька PDF файлів</p>
                 </div>
-                <input id="pdf-upload" type="file" className="hidden" accept=".pdf,application/pdf" multiple onChange={handleFileChange} />
+                <input ref={fileInputRef} id="pdf-upload" type="file" className="hidden" accept=".pdf,application/pdf" multiple onChange={handleFileChange} />
             </label>
         </div>
     );
@@ -276,7 +288,7 @@ const App: React.FC = () => {
                     <button onClick={handleImportSettings} title="Імпортувати налаштування" className="p-2 text-brand-text-dark hover:text-brand-primary transition-colors">
                         <ImportIcon />
                     </button>
-                    <input type="file" ref={fileInputRef} onChange={handleSettingsFileChange} accept=".json" className="hidden" />
+                    <input type="file" ref={settingsFileInputRef} onChange={handleSettingsFileChange} accept=".json" className="hidden" />
                     <button onClick={handleExportSettings} title="Експортувати налаштування" className="p-2 text-brand-text-dark hover:text-brand-primary transition-colors">
                         <ExportIcon />
                     </button>
@@ -392,10 +404,11 @@ const App: React.FC = () => {
                                         <CheckCircleIcon className="text-green-400" />
                                         <h3 className="text-lg font-semibold text-green-300">PDF успішно оновлено!</h3>
                                     </div>
+                                     <p className="text-sm text-green-200 mb-3">Завантаження почалося автоматично.</p>
                                     <a href={modifiedPdfUrl} download={`modified_${activePdfFile?.name || 'document.pdf'}`}
                                        className="inline-flex items-center justify-center gap-2 mt-2 px-6 py-2 bg-green-600 text-white font-bold rounded-lg hover:bg-green-500 transition-colors">
                                         <DownloadIcon />
-                                        Завантажити новий PDF
+                                        Завантажити знову
                                     </a>
                                 </div>
                             )}

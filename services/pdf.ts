@@ -1,19 +1,27 @@
 import { QrCodeInfo, QrCodeCustomization } from '../types';
 
-// Declare global variables from CDN scripts for TypeScript
-declare const pdfjsLib: any;
-declare const jsQR: any;
-declare const QRCode: any;
-declare const jspdf: any;
+// Augment the Window interface to include CDN libraries for TypeScript, making them globally available.
+declare global {
+  interface Window {
+    pdfjsLib: any;
+    jsQR: any;
+    QRCode: any;
+    jspdf: any;
+  }
+}
+
 
 // Configure PDF.js worker
 if (typeof window !== 'undefined' && 'pdfjsLib' in window) {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
 }
 
 export const extractQrCodesFromPdf = async (file: File): Promise<QrCodeInfo[]> => {
+  if (!window.pdfjsLib || !window.jsQR) {
+    throw new Error('PDF processing libraries (pdf.js or jsQR) not loaded.');
+  }
   const fileBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: fileBuffer }).promise;
+  const pdf = await window.pdfjsLib.getDocument({ data: fileBuffer }).promise;
   const numPages = pdf.numPages;
   const allQrCodes: QrCodeInfo[] = [];
   const canvas = document.createElement('canvas');
@@ -39,7 +47,7 @@ export const extractQrCodesFromPdf = async (file: File): Promise<QrCodeInfo[]> =
     // Loop to find all QR codes on the page.
     while (true) {
       // Use default 'attemptBoth' for inversion for better robustness.
-      const code = jsQR(imageData.data, imageData.width, imageData.height);
+      const code = window.jsQR(imageData.data, imageData.width, imageData.height);
 
       if (code) {
         const { x, y } = code.location.topLeftCorner;
@@ -100,7 +108,10 @@ export const extractQrCodesFromPdf = async (file: File): Promise<QrCodeInfo[]> =
 };
 
 const generateQrCodeDataUrl = (url: string, customization: QrCodeCustomization, scale: number = 1): Promise<string> => {
-    return QRCode.toDataURL(url, {
+    if (!window.QRCode) {
+        throw new Error('QRCode generation library not loaded.');
+    }
+    return window.QRCode.toDataURL(url, {
         errorCorrectionLevel: 'H',
         width: customization.size * scale, // Render larger for better quality
         margin: 1,
@@ -117,9 +128,12 @@ export const replaceQrCodeInPdf = async (
   newUrl: string,
   customization: QrCodeCustomization
 ): Promise<string> => {
+    if (!window.pdfjsLib || !window.jspdf) {
+        throw new Error('PDF processing libraries (pdf.js or jspdf) not loaded.');
+    }
     const fileBuffer = await file.arrayBuffer();
-    const pdfDoc = await pdfjsLib.getDocument({ data: fileBuffer }).promise;
-    const { jsPDF } = jspdf;
+    const pdfDoc = await window.pdfjsLib.getDocument({ data: fileBuffer }).promise;
+    const { jsPDF } = window.jspdf;
     const newPdf = new jsPDF({
         orientation: qrToReplace.pageWidth > qrToReplace.pageHeight ? 'l' : 'p',
         unit: 'pt',
@@ -175,8 +189,11 @@ export const generatePreviewPageAsDataUrl = async (
   newUrl: string,
   customization: QrCodeCustomization
 ): Promise<string> => {
+    if (!window.pdfjsLib || !window.QRCode) {
+        throw new Error('PDF processing libraries (pdf.js or QRCode) not loaded.');
+    }
     const fileBuffer = await file.arrayBuffer();
-    const pdfDoc = await pdfjsLib.getDocument({ data: fileBuffer }).promise;
+    const pdfDoc = await window.pdfjsLib.getDocument({ data: fileBuffer }).promise;
     
     if (qrToReplace.pageNumber > pdfDoc.numPages) {
         throw new Error("Page number is out of bounds.");
