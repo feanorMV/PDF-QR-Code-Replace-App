@@ -5,30 +5,47 @@ import Loader from './components/Loader';
 import { UploadIcon, QrCodeIcon, DownloadIcon, LinkIcon, CheckCircleIcon, PaletteIcon, SettingsIcon, ExportIcon, ImportIcon } from './components/icons';
 import PreviewModal from './components/PreviewModal';
 
-const isPdfFile = async (file: File): Promise<boolean> => {
-    // Rely solely on the magic number, as it's the most robust method.
-    // Browsers can be unreliable with MIME types, and users can rename files.
-    if (file.size < 5) {
-        // Not large enough to be a valid PDF.
-        return false;
-    }
-    
-    try {
-        // Slice the first 5 bytes of the file.
+const isPdfFile = (file: File): Promise<boolean> => {
+    return new Promise((resolve) => {
+        // A minimal check for file size to avoid errors with empty files.
+        if (file.size < 5) {
+            return resolve(false);
+        }
+
+        const reader = new FileReader();
+
+        reader.onload = (event: ProgressEvent<FileReader>) => {
+            try {
+                const result = event.target?.result;
+                // Ensure we have an ArrayBuffer.
+                if (result instanceof ArrayBuffer) {
+                    const view = new Uint8Array(result);
+                    // Check for the byte sequence of "%PDF-" (ASCII: 37, 80, 68, 70, 45).
+                    if (view[0] === 37 && view[1] === 80 && view[2] === 68 && view[3] === 70 && view[4] === 45) {
+                        resolve(true);
+                    } else {
+                        resolve(false);
+                    }
+                } else {
+                    resolve(false);
+                }
+            } catch (e) {
+                // In case of any unexpected error during processing, resolve as false.
+                console.error("Error processing file header:", e);
+                resolve(false);
+            }
+        };
+
+        reader.onerror = () => {
+            // Handle cases where the file cannot be read at all.
+            console.error("FileReader could not read the file slice.");
+            resolve(false);
+        };
+        
+        // We only need the first 5 bytes to check the magic number.
         const blob = file.slice(0, 5);
-        // Read the slice into an ArrayBuffer using the promise-based API.
-        const buffer = await blob.arrayBuffer();
-        const view = new Uint8Array(buffer);
-        
-        // Convert the bytes to a string.
-        const signature = String.fromCharCode.apply(null, view as any);
-        
-        // Check for the PDF magic number.
-        return signature === '%PDF-';
-    } catch (error) {
-        console.error("Error validating PDF magic number:", error);
-        return false;
-    }
+        reader.readAsArrayBuffer(blob);
+    });
 };
 
 
