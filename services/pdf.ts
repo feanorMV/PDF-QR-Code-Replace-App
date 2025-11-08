@@ -4,7 +4,7 @@ import { QrCodeInfo, QrCodeCustomization } from '../types';
 declare global {
   interface Window {
     pdfjsLib: any;
-    jsQR: any;
+    ZXing: any;
     QRCode: any;
     jspdf: any;
   }
@@ -17,15 +17,17 @@ if (typeof window !== 'undefined' && 'pdfjsLib' in window) {
 }
 
 export const extractQrCodesFromPdf = async (file: File): Promise<QrCodeInfo[]> => {
-  if (!window.pdfjsLib || !window.jsQR) {
-    throw new Error('PDF processing libraries (pdf.js or jsQR) not loaded.');
+  if (!window.pdfjsLib || !window.ZXing) {
+    throw new Error('PDF processing libraries (pdf.js or ZXing) not loaded.');
   }
+  
+  const codeReader = new window.ZXing.BrowserQRCodeReader();
   const fileBuffer = await file.arrayBuffer();
   const pdf = await window.pdfjsLib.getDocument({ data: fileBuffer }).promise;
   const numPages = pdf.numPages;
   const allQrCodes: QrCodeInfo[] = [];
   const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const ctx = canvas.getContext('2d');
 
   if (!ctx) {
     throw new Error('Could not create canvas context');
@@ -33,26 +35,28 @@ export const extractQrCodesFromPdf = async (file: File): Promise<QrCodeInfo[]> =
 
   for (let i = 1; i <= numPages; i++) {
     const page = await pdf.getPage(i);
-    // Increased scale for better accuracy with small or complex codes.
-    const scale = 3.0;
+    // Use a moderate scale; ZXing is quite effective.
+    const scale = 2.0;
     const viewport = page.getViewport({ scale });
     canvas.width = viewport.width;
     canvas.height = viewport.height;
 
     await page.render({ canvasContext: ctx, viewport }).promise;
     
-    // This imageData will be scanned repeatedly to find all QR codes.
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-
-    // Loop to find all QR codes on the page.
+    // Loop to find all QR codes on the page using ZXing's exception-based flow.
     while (true) {
-      // Use default 'attemptBoth' for inversion for better robustness.
-      const code = window.jsQR(imageData.data, imageData.width, imageData.height);
+      try {
+        const result = codeReader.decodeFromCanvas(canvas);
+        const resultPoints = result.getResultPoints();
 
-      if (code) {
-        const { x, y } = code.location.topLeftCorner;
-        const qrWidth = code.location.topRightCorner.x - x;
-        const qrHeight = code.location.bottomLeftCorner.y - y;
+        // Determine bounding box from result points for accurate cropping.
+        const minX = Math.min(...resultPoints.map(p => p.getX()));
+        const maxX = Math.max(...resultPoints.map(p => p.getX()));
+        const minY = Math.min(...resultPoints.map(p => p.getY()));
+        const maxY = Math.max(...resultPoints.map(p => p.getY()));
+        
+        const qrWidth = maxX - minX;
+        const qrHeight = maxY - minY;
 
         const qrCanvas = document.createElement('canvas');
         qrCanvas.width = qrWidth;
@@ -60,47 +64,33 @@ export const extractQrCodesFromPdf = async (file: File): Promise<QrCodeInfo[]> =
         const qrCtx = qrCanvas.getContext('2d');
 
         if (qrCtx) {
-          qrCtx.drawImage(canvas, x, y, qrWidth, qrHeight, 0, 0, qrWidth, qrHeight);
+          qrCtx.drawImage(canvas, minX, minY, qrWidth, qrHeight, 0, 0, qrWidth, qrHeight);
           
           allQrCodes.push({
-            id: `${i}-${x}-${y}`,
-            data: code.data,
+            id: `${i}-${minX}-${minY}`,
+            data: result.getText(),
             imageDataUrl: qrCanvas.toDataURL(),
             // Scale location back down to original PDF point size
-            location: { x: x / scale, y: y / scale, width: qrWidth / scale, height: qrHeight / scale },
+            location: { x: minX / scale, y: minY / scale, width: qrWidth / scale, height: qrHeight / scale },
             pageNumber: i,
             pageWidth: viewport.width / scale,
             pageHeight: viewport.height / scale,
           });
         }
         
-        // "White out" the found QR code in the imageData to prevent re-detection
-        const {
-            topLeftCorner,
-            topRightCorner,
-            bottomLeftCorner,
-            bottomRightCorner,
-        } = code.location;
+        // Blank out the found QR code to allow finding subsequent codes on the same page.
+        ctx.fillStyle = 'white';
+        ctx.fillRect(minX, minY, qrWidth, qrHeight);
 
-        const padding = 10; // Add a small padding to ensure the whole code is covered
-        const minX = Math.floor(Math.min(topLeftCorner.x, topRightCorner.x, bottomLeftCorner.x, bottomRightCorner.x)) - padding;
-        const maxX = Math.ceil(Math.max(topLeftCorner.x, topRightCorner.x, bottomLeftCorner.x, bottomRightCorner.x)) + padding;
-        const minY = Math.floor(Math.min(topLeftCorner.y, topRightCorner.y, bottomLeftCorner.y, bottomRightCorner.y)) - padding;
-        const maxY = Math.ceil(Math.max(topLeftCorner.y, topRightCorner.y, bottomLeftCorner.y, bottomRightCorner.y)) + padding;
-
-        for (let yPixel = minY; yPixel < maxY; yPixel++) {
-            for (let xPixel = minX; xPixel < maxX; xPixel++) {
-                if(xPixel < 0 || xPixel >= imageData.width || yPixel < 0 || yPixel >= imageData.height) continue;
-                const pixelIndex = (yPixel * imageData.width + xPixel) * 4;
-                // Set pixel to white to match typical background.
-                imageData.data[pixelIndex] = 255;     // R
-                imageData.data[pixelIndex + 1] = 255; // G
-                imageData.data[pixelIndex + 2] = 255; // B
-            }
+      } catch (err) {
+        // ZXing throws NotFoundException when no more codes are found. This is our signal to stop scanning the current page.
+        if (err instanceof window.ZXing.NotFoundException) {
+          break;
+        } else {
+          // Log and break on other unexpected errors.
+          console.error("An unexpected error occurred during QR code decoding:", err);
+          break;
         }
-      } else {
-        // No more QR codes found on this page, break the loop.
-        break;
       }
     }
   }
