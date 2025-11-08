@@ -10,12 +10,6 @@ declare global {
   }
 }
 
-
-// Configure PDF.js worker
-if (typeof window !== 'undefined' && 'pdfjsLib' in window) {
-  window.pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
-}
-
 export const extractQrCodesFromPdf = async (file: File): Promise<QrCodeInfo[]> => {
   if (!window.pdfjsLib || !window.ZXing) {
     throw new Error('PDF processing libraries (pdf.js or ZXing) not loaded.');

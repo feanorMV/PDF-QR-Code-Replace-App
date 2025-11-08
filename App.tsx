@@ -12,7 +12,10 @@ import Loader from './components/Loader';
 import { UploadIcon, QrCodeIcon, DownloadIcon, LinkIcon, CheckCircleIcon, PaletteIcon, SettingsIcon, ExportIcon, ImportIcon } from './components/icons';
 import PreviewModal from './components/PreviewModal';
 
+type AppStatus = 'initializing' | 'ready' | 'error';
+
 const App: React.FC = () => {
+    const [appStatus, setAppStatus] = useState<AppStatus>('initializing');
     const [processedFiles, setProcessedFiles] = useState<ProcessedFile[]>([]);
     const [selectedQr, setSelectedQr] = useState<{ fileId: string; qrId: string } | null>(null);
     const [newUrl, setNewUrl] = useState<string>('');
@@ -33,6 +36,32 @@ const App: React.FC = () => {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const settingsFileInputRef = useRef<HTMLInputElement>(null);
 
+    useEffect(() => {
+        const libs = ['pdfjsLib', 'ZXing', 'QRCode', 'jspdf'];
+        let intervalId: number;
+        const startTime = Date.now();
+        const timeout = 10000; // 10 seconds
+
+        const checkLibs = () => {
+            const allLoaded = libs.every(lib => typeof (window as any)[lib] !== 'undefined');
+            if (allLoaded) {
+                // Configure worker once pdfjsLib is loaded
+                window.pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
+                setAppStatus('ready');
+                clearInterval(intervalId);
+            } else if (Date.now() - startTime > timeout) {
+                setError('Не вдалося завантажити необхідні компоненти. Будь ласка, перевірте з\'єднання з Інтернетом, вимкніть блокувальники реклами та оновіть сторінку.');
+                setAppStatus('error');
+                clearInterval(intervalId);
+            }
+        };
+
+        intervalId = window.setInterval(checkLibs, 100);
+
+        return () => {
+            clearInterval(intervalId);
+        };
+    }, []);
 
     const handleFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
         const files = event.target.files;
@@ -306,11 +335,11 @@ const App: React.FC = () => {
         </div>
     );
 
-    const renderContent = () => {
+    const renderMainContent = () => {
         if (isLoading) return <Loader text={loadingText} />;
         if (processedFiles.length === 0 && !error) return renderFileUpload();
 
-        if (processedFiles.length === 0 && error) {
+        if (processedFiles.length === 0 && error && appStatus === 'ready') {
             return (
                  <div className="text-center">
                     <div className="w-full max-w-lg p-4 mb-4 text-center text-red-300 bg-red-900/50 border border-red-500 rounded-lg">{error}</div>
@@ -318,7 +347,6 @@ const App: React.FC = () => {
                 </div>
             )
         }
-
 
         return (
             <div className="w-full flex flex-col lg:flex-row gap-8">
@@ -405,6 +433,20 @@ const App: React.FC = () => {
         );
     };
 
+    const renderAppStatus = () => {
+        switch (appStatus) {
+            case 'initializing':
+                return <Loader text="Ініціалізація компонентів..." />;
+            case 'error':
+                 // The main error display will show the message.
+                return null;
+            case 'ready':
+                return renderMainContent();
+            default:
+                return null;
+        }
+    }
+
     return (
         <div className="min-h-screen bg-brand-bg flex flex-col items-center p-4 sm:p-8">
              {isPreviewModalOpen && activeFileInfo && (
@@ -423,11 +465,11 @@ const App: React.FC = () => {
             </header>
             
             <main className="w-full max-w-7xl flex-grow flex flex-col items-center justify-center">
-                {error && !isLoading && <div className="w-full max-w-4xl p-3 mb-4 text-center text-yellow-300 bg-yellow-900/50 border border-yellow-500 rounded-lg">{error}</div>}
-                {renderContent()}
+                {error && <div className="w-full max-w-4xl p-3 mb-4 text-center text-yellow-300 bg-yellow-900/50 border border-yellow-500 rounded-lg">{error}</div>}
+                {renderAppStatus()}
             </main>
             
-            {(processedFiles.length > 0 || error) && (
+            {(appStatus === 'ready' && (processedFiles.length > 0 || error)) && (
                  <button onClick={resetState} className="mt-8 text-sm text-brand-text-dark hover:text-brand-primary underline transition-colors">
                     Почати знову з новими файлами
                  </button>
