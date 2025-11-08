@@ -5,49 +5,30 @@ import Loader from './components/Loader';
 import { UploadIcon, QrCodeIcon, DownloadIcon, LinkIcon, CheckCircleIcon, PaletteIcon, SettingsIcon, ExportIcon, ImportIcon } from './components/icons';
 import PreviewModal from './components/PreviewModal';
 
-const isPdfFile = (file: File): Promise<boolean> => {
-    return new Promise((resolve) => {
-        // First, perform quick, non-async checks for performance.
-        if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
-            return resolve(true);
-        }
-
-        // If quick checks fail, validate using the magic number.
-        // This is the most reliable method but requires reading a portion of the file.
-        const reader = new FileReader();
-
-        reader.onloadend = (e: ProgressEvent<FileReader>) => {
-            // Check if reading was successful and we have a result.
-            if (e.target?.readyState === FileReader.DONE && e.target.result) {
-                try {
-                    const buffer = e.target.result as ArrayBuffer;
-                    const view = new Uint8Array(buffer);
-                    // Ensure the file is large enough for the signature.
-                    if (view.length >= 5) {
-                        // Convert the first 5 bytes to a string.
-                        const signature = String.fromCharCode(view[0], view[1], view[2], view[3], view[4]);
-                        // Compare with the known PDF magic number.
-                        if (signature === '%PDF-') {
-                            return resolve(true);
-                        }
-                    }
-                } catch (error) {
-                    console.error("Error validating PDF magic number:", error);
-                }
-            }
-            // If any check fails along the way, resolve to false.
-            return resolve(false);
-        };
-        
-        reader.onerror = () => {
-            console.error("FileReader error while checking PDF magic number.");
-            return resolve(false);
-        };
-
-        // Read only the first 5 bytes of the file for efficiency.
+const isPdfFile = async (file: File): Promise<boolean> => {
+    // Rely solely on the magic number, as it's the most robust method.
+    // Browsers can be unreliable with MIME types, and users can rename files.
+    if (file.size < 5) {
+        // Not large enough to be a valid PDF.
+        return false;
+    }
+    
+    try {
+        // Slice the first 5 bytes of the file.
         const blob = file.slice(0, 5);
-        reader.readAsArrayBuffer(blob);
-    });
+        // Read the slice into an ArrayBuffer using the promise-based API.
+        const buffer = await blob.arrayBuffer();
+        const view = new Uint8Array(buffer);
+        
+        // Convert the bytes to a string.
+        const signature = String.fromCharCode.apply(null, view as any);
+        
+        // Check for the PDF magic number.
+        return signature === '%PDF-';
+    } catch (error) {
+        console.error("Error validating PDF magic number:", error);
+        return false;
+    }
 };
 
 
