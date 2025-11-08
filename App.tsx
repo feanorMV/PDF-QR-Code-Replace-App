@@ -26,36 +26,56 @@ const App: React.FC = () => {
 
     const handleFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
         const files = event.target.files;
-        if (files && files.length > 0) {
-            resetState();
-            setError(null);
-            setIsLoading(true);
-            setLoadingText(`Обробка ${files.length} файлів...`);
-            
-            try {
-                const processingPromises = Array.from(files).map(async file => {
-                    if (file.type !== 'application/pdf') {
-                        console.warn(`Skipping non-PDF file: ${file.name}`);
-                        return null;
-                    }
-                    const codes = await extractQrCodesFromPdf(file);
-                    return { file, qrCodes: codes, id: `${file.name}-${file.lastModified}` };
-                });
-
-                const results = (await Promise.all(processingPromises)).filter((p): p is ProcessedPdf => p !== null);
-                
-                if (results.length === 0) {
-                     setError('Не вдалося обробити жодного PDF файлу, або в них немає QR-кодів.');
-                }
-                setProcessedPdfs(results);
-            } catch (err) {
-                console.error(err);
-                setError('Не вдалося обробити PDF. Переконайтеся, що файли не пошкоджено.');
-            } finally {
-                setIsLoading(false);
-            }
-        } else if (files && files.length === 0) {
+        if (!files || files.length === 0) {
             setError('Будь ласка, виберіть хоча б один PDF файл.');
+            return;
+        }
+
+        resetState();
+        setError(null);
+        setIsLoading(true);
+        setLoadingText(`Обробка ${files.length} файлів...`);
+
+        try {
+            const pdfFiles = Array.from(files).filter(file => file.type === 'application/pdf');
+
+            if (pdfFiles.length === 0) {
+                setError('У вашому виборі не знайдено файлів PDF. Будь ласка, спробуйте ще раз.');
+                setIsLoading(false);
+                return;
+            }
+
+            const outcomes = await Promise.allSettled(
+                pdfFiles.map(file => 
+                    extractQrCodesFromPdf(file).then(qrCodes => ({ file, qrCodes, id: `${file.name}-${file.lastModified}` }))
+                )
+            );
+            
+            const successfulResults: ProcessedPdf[] = [];
+            const failedFiles: File[] = [];
+
+            outcomes.forEach((outcome, index) => {
+                if (outcome.status === 'fulfilled') {
+                    successfulResults.push(outcome.value);
+                } else {
+                    console.error(`Error processing ${pdfFiles[index].name}:`, outcome.reason);
+                    failedFiles.push(pdfFiles[index]);
+                }
+            });
+
+            if (successfulResults.length === 0) {
+                setError('Не вдалося обробити жодного PDF файлу. Переконайтеся, що файли не пошкоджено.');
+            } else {
+                setProcessedPdfs(successfulResults);
+                if (failedFiles.length > 0) {
+                    setError(`Попередження: Не вдалося обробити ${failedFiles.length} файл(и).`);
+                }
+            }
+        } catch (err) {
+            console.error(err);
+            setError('Сталася неочікувана помилка під час обробки файлів.');
+        } finally {
+            setIsLoading(false);
         }
     }, []);
 
@@ -207,7 +227,17 @@ const App: React.FC = () => {
 
     const renderContent = () => {
         if (isLoading) return <Loader text={loadingText} />;
-        if (processedPdfs.length === 0) return renderFileUpload();
+        if (processedPdfs.length === 0 && !error) return renderFileUpload();
+
+        if (processedPdfs.length === 0 && error) {
+            return (
+                 <div className="text-center">
+                    <div className="w-full max-w-lg p-4 mb-4 text-center text-red-300 bg-red-900/50 border border-red-500 rounded-lg">{error}</div>
+                    {renderFileUpload()}
+                </div>
+            )
+        }
+
 
         return (
             <div className="w-full flex flex-col lg:flex-row gap-8">
@@ -231,6 +261,7 @@ const App: React.FC = () => {
                                             </div>
                                         </div>
                                     ))}
+                                     {qrCodes.length === 0 && <p className="p-3 text-sm text-brand-text-dark">QR-кодів не знайдено.</p>}
                                 </div>
                             </details>
                         ))}
@@ -286,6 +317,7 @@ const App: React.FC = () => {
                         <div className="flex flex-col items-center justify-center h-full text-center">
                             <QrCodeIcon className="w-16 h-16 text-brand-secondary" />
                             <p className="mt-4 text-lg text-brand-text-dark">Виберіть QR-код зі списку, щоб почати.</p>
+                             {processedPdfs.some(p => p.qrCodes.length === 0) && <p className="mt-2 text-sm text-brand-text-dark/70">У деяких файлах не знайдено QR-кодів.</p>}
                         </div>
                     )}
                 </div>
@@ -308,12 +340,12 @@ const App: React.FC = () => {
                 <p className="text-md text-brand-text-dark mt-2">Завантажте PDF, налаштуйте, перегляньте та замініть QR-коди.</p>
             </header>
             
-            <main className="w-full max-w-7xl flex-grow flex items-center justify-center">
-                {error && <div className="w-full max-w-lg p-4 mb-4 text-center text-red-300 bg-red-900/50 border border-red-500 rounded-lg">{error}</div>}
+            <main className="w-full max-w-7xl flex-grow flex flex-col items-center justify-center">
+                {error && !isLoading && processedPdfs.length > 0 && <div className="w-full max-w-4xl p-3 mb-4 text-center text-yellow-300 bg-yellow-900/50 border border-yellow-500 rounded-lg">{error}</div>}
                 {renderContent()}
             </main>
             
-            {processedPdfs.length > 0 && (
+            {(processedPdfs.length > 0 || error) && (
                  <button onClick={resetState} className="mt-8 text-sm text-brand-text-dark hover:text-brand-primary underline transition-colors">
                     Почати знову з новими файлами
                  </button>

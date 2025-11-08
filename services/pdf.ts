@@ -15,7 +15,7 @@ export const extractQrCodesFromPdf = async (file: File): Promise<QrCodeInfo[]> =
   const fileBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: fileBuffer }).promise;
   const numPages = pdf.numPages;
-  const qrCodes: QrCodeInfo[] = [];
+  const allQrCodes: QrCodeInfo[] = [];
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
@@ -25,39 +25,78 @@ export const extractQrCodesFromPdf = async (file: File): Promise<QrCodeInfo[]> =
 
   for (let i = 1; i <= numPages; i++) {
     const page = await pdf.getPage(i);
-    const viewport = page.getViewport({ scale: 2 }); // Higher scale for better detection
+    // Increased scale for better accuracy with small or complex codes.
+    const scale = 3.0;
+    const viewport = page.getViewport({ scale });
     canvas.width = viewport.width;
     canvas.height = viewport.height;
 
     await page.render({ canvasContext: ctx, viewport }).promise;
+    
+    // This imageData will be scanned repeatedly to find all QR codes.
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const code = jsQR(imageData.data, imageData.width, imageData.height);
 
-    if (code) {
-      const { x, y, width, height } = code.location.topLeftCorner;
-      const qrWidth = code.location.topRightCorner.x - x;
-      const qrHeight = code.location.bottomLeftCorner.y - y;
+    // Loop to find all QR codes on the page.
+    while (true) {
+      // Use default 'attemptBoth' for inversion for better robustness.
+      const code = jsQR(imageData.data, imageData.width, imageData.height);
 
-      const qrCanvas = document.createElement('canvas');
-      qrCanvas.width = qrWidth;
-      qrCanvas.height = qrHeight;
-      const qrCtx = qrCanvas.getContext('2d');
-      if (qrCtx) {
-        qrCtx.drawImage(canvas, x, y, qrWidth, qrHeight, 0, 0, qrWidth, qrHeight);
+      if (code) {
+        const { x, y } = code.location.topLeftCorner;
+        const qrWidth = code.location.topRightCorner.x - x;
+        const qrHeight = code.location.bottomLeftCorner.y - y;
+
+        const qrCanvas = document.createElement('canvas');
+        qrCanvas.width = qrWidth;
+        qrCanvas.height = qrHeight;
+        const qrCtx = qrCanvas.getContext('2d');
+
+        if (qrCtx) {
+          qrCtx.drawImage(canvas, x, y, qrWidth, qrHeight, 0, 0, qrWidth, qrHeight);
+          
+          allQrCodes.push({
+            id: `${i}-${x}-${y}`,
+            data: code.data,
+            imageDataUrl: qrCanvas.toDataURL(),
+            // Scale location back down to original PDF point size
+            location: { x: x / scale, y: y / scale, width: qrWidth / scale, height: qrHeight / scale },
+            pageNumber: i,
+            pageWidth: viewport.width / scale,
+            pageHeight: viewport.height / scale,
+          });
+        }
         
-        qrCodes.push({
-          id: `${i}-${x}-${y}`,
-          data: code.data,
-          imageDataUrl: qrCanvas.toDataURL(),
-          location: { x: x / 2, y: y / 2, width: qrWidth / 2, height: qrHeight / 2 }, // Scale back down
-          pageNumber: i,
-          pageWidth: viewport.width / 2,
-          pageHeight: viewport.height / 2,
-        });
+        // "White out" the found QR code in the imageData to prevent re-detection
+        const {
+            topLeftCorner,
+            topRightCorner,
+            bottomLeftCorner,
+            bottomRightCorner,
+        } = code.location;
+
+        const padding = 10; // Add a small padding to ensure the whole code is covered
+        const minX = Math.floor(Math.min(topLeftCorner.x, topRightCorner.x, bottomLeftCorner.x, bottomRightCorner.x)) - padding;
+        const maxX = Math.ceil(Math.max(topLeftCorner.x, topRightCorner.x, bottomLeftCorner.x, bottomRightCorner.x)) + padding;
+        const minY = Math.floor(Math.min(topLeftCorner.y, topRightCorner.y, bottomLeftCorner.y, bottomRightCorner.y)) - padding;
+        const maxY = Math.ceil(Math.max(topLeftCorner.y, topRightCorner.y, bottomLeftCorner.y, bottomRightCorner.y)) + padding;
+
+        for (let yPixel = minY; yPixel < maxY; yPixel++) {
+            for (let xPixel = minX; xPixel < maxX; xPixel++) {
+                if(xPixel < 0 || xPixel >= imageData.width || yPixel < 0 || yPixel >= imageData.height) continue;
+                const pixelIndex = (yPixel * imageData.width + xPixel) * 4;
+                // Set pixel to white to match typical background.
+                imageData.data[pixelIndex] = 255;     // R
+                imageData.data[pixelIndex + 1] = 255; // G
+                imageData.data[pixelIndex + 2] = 255; // B
+            }
+        }
+      } else {
+        // No more QR codes found on this page, break the loop.
+        break;
       }
     }
   }
-  return qrCodes;
+  return allQrCodes;
 };
 
 const generateQrCodeDataUrl = (url: string, customization: QrCodeCustomization, scale: number = 1): Promise<string> => {
