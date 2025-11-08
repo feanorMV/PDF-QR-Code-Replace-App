@@ -1,0 +1,5 @@
+{
+  "name": "PDF QR Code Replacer",
+  "description": "An application to detect QR codes in multiple PDF documents, allowing users to preview changes, customize the new QR code's appearance (color, size), and replace it with one generated from a specified URL.",
+  "requestFramePermissions": []
+}
