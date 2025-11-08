@@ -5,6 +5,43 @@ import Loader from './components/Loader';
 import { UploadIcon, QrCodeIcon, DownloadIcon, LinkIcon, CheckCircleIcon, PaletteIcon, SettingsIcon, ExportIcon, ImportIcon } from './components/icons';
 import PreviewModal from './components/PreviewModal';
 
+const isPdfFile = (file: File): Promise<boolean> => {
+    // Quick check for extension and type first for performance
+    if (file.name.toLowerCase().endsWith('.pdf') || file.type === 'application/pdf') {
+        return Promise.resolve(true);
+    }
+
+    // If quick checks fail, read the file header (magic number) for robust validation
+    return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = (e) => {
+            if (e.target?.readyState === FileReader.DONE) {
+                try {
+                    const arr = new Uint8Array(e.target.result as ArrayBuffer).subarray(0, 5);
+                    let header = "";
+                    for(let i = 0; i < arr.length; i++) {
+                       header += String.fromCharCode(arr[i]);
+                    }
+                    // Check for PDF magic number: %PDF-
+                    resolve(header === "%PDF-");
+                } catch (error) {
+                    resolve(false);
+                }
+            } else {
+                resolve(false);
+            }
+        };
+        reader.onerror = () => {
+           resolve(false);
+        };
+        
+        // Read the first 5 bytes of the file
+        const blob = file.slice(0, 5);
+        reader.readAsArrayBuffer(blob);
+    });
+};
+
+
 const App: React.FC = () => {
     const [processedPdfs, setProcessedPdfs] = useState<ProcessedPdf[]>([]);
     const [selectedQr, setSelectedQr] = useState<{ fileId: string; qrId: string } | null>(null);
@@ -36,16 +73,22 @@ const App: React.FC = () => {
         resetState();
         setError(null);
         setIsLoading(true);
-        setLoadingText(`Обробка ${files.length} файлів...`);
+        setLoadingText(`Перевірка ${files.length} файлів...`);
 
         try {
-            const pdfFiles = Array.from(files).filter(file => file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'));
+            const fileList = Array.from(files);
+            
+            const filterResults = await Promise.all(fileList.map(isPdfFile));
+            const pdfFiles = fileList.filter((_, index) => filterResults[index]);
+
 
             if (pdfFiles.length === 0) {
                 setError('У вашому виборі не знайдено файлів PDF. Будь ласка, спробуйте ще раз.');
                 setIsLoading(false);
                 return;
             }
+            
+            setLoadingText(`Обробка ${pdfFiles.length} PDF файлів...`);
 
             const outcomes = await Promise.allSettled(
                 pdfFiles.map(file => 
@@ -230,7 +273,7 @@ const App: React.FC = () => {
                     <p className="mb-2 text-sm text-brand-text-dark"><span className="font-semibold text-brand-primary">Натисніть, щоб завантажити</span> або перетягніть</p>
                     <p className="text-xs text-brand-text-dark">Один або кілька PDF файлів</p>
                 </div>
-                <input id="pdf-upload" type="file" className="hidden" accept=".pdf" multiple onChange={handleFileChange} />
+                <input id="pdf-upload" type="file" className="hidden" accept=".pdf,application/pdf" multiple onChange={handleFileChange} />
             </label>
         </div>
     );
@@ -385,7 +428,6 @@ const App: React.FC = () => {
              {isPreviewModalOpen && activeQrInfo && (
                 <PreviewModal 
                     imageUrl={previewImageUrl}
-                    // FIX: Removed qrLocation prop as it's not defined in PreviewModalProps
                     onConfirm={handleConfirmReplace}
                     onCancel={() => setIsPreviewModalOpen(false)}
                     isProcessing={isReplacing}
