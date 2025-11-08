@@ -36,56 +36,55 @@ const App: React.FC = () => {
 
     const handleFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
         const files = event.target.files;
-        if (!files || files.length === 0) {
-            return;
-        }
-
+        if (!files || files.length === 0) return;
+    
         resetState();
-        setError(null);
         setIsLoading(true);
         const fileList = Array.from(files);
         setLoadingText(`Обробка ${fileList.length} файл(ів)...`);
-
-        try {
-            const processPromises = fileList.map(file => {
-                const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
-                const isImage = file.type.startsWith('image/');
-
-                const promise = isPdf 
-                    ? extractQrCodesFromPdf(file) 
-                    : isImage
-                    ? extractQrCodesFromImage(file)
-                    : Promise.reject(new Error(`Unsupported file type: ${file.name}`));
-
-                return promise.then(qrCodes => ({ file, qrCodes, id: `${file.name}-${file.lastModified}` }));
-            });
-            
-            const results = await Promise.all(processPromises);
-            
-            setProcessedFiles(results);
-            
-            if (results.every(res => res.qrCodes.length === 0)) {
-                setError("QR-кодів не знайдено в жодному з вибраних файлів.");
+    
+        const processPromises = fileList.map(file => {
+            const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+            const isImage = file.type.startsWith('image/');
+    
+            if (isPdf) {
+                return extractQrCodesFromPdf(file).then(qrCodes => ({ file, qrCodes, id: `${file.name}-${file.lastModified}` }));
             }
-
-        } catch (err: any) {
-            console.error("File processing failed:", err);
-            let errorMessage = 'Сталася неочікувана помилка під час обробки файлів.';
-            if (err && err.message) {
-                 if (err.message.includes('not loaded')) {
-                    errorMessage = 'Помилка ініціалізації. Будь ласка, перевірте з\'єднання з Інтернетом та оновіть сторінку.';
-                } else if (err.message.toLowerCase().includes('invalid pdf')) {
-                    errorMessage = 'Один або кілька файлів не є дійсними PDF документами.';
-                } else if (err.message.includes('Unsupported file type')) {
-                    errorMessage = 'Один або кілька файлів мають непідтримуваний тип.';
-                } else {
-                    errorMessage = `Виникла помилка: ${err.message}`;
-                }
+            if (isImage) {
+                return extractQrCodesFromImage(file).then(qrCodes => ({ file, qrCodes, id: `${file.name}-${file.lastModified}` }));
             }
-            setError(errorMessage);
-        } finally {
-            setIsLoading(false);
+            return Promise.reject(new Error(`Непідтримуваний тип файлу: ${file.name}`));
+        });
+    
+        const settledResults = await Promise.allSettled(processPromises);
+    
+        const successfulFiles: ProcessedFile[] = [];
+        const failedFileMessages: string[] = [];
+    
+        settledResults.forEach((result, index) => {
+            if (result.status === 'fulfilled') {
+                successfulFiles.push(result.value);
+            } else {
+                console.error(`Failed to process ${fileList[index].name}:`, result.reason);
+                failedFileMessages.push(`${fileList[index].name}: ${result.reason.message || 'Невідома помилка'}`);
+            }
+        });
+    
+        setProcessedFiles(successfulFiles);
+    
+        let currentError = '';
+        if (failedFileMessages.length > 0) {
+            currentError = `Не вдалося обробити деякі файли: ${failedFileMessages.join('; ')}. `;
         }
+    
+        if (successfulFiles.length === 0 && failedFileMessages.length > 0) {
+            currentError = `Не вдалося обробити жодного з вибраних файлів. ${currentError}`;
+        } else if (successfulFiles.length > 0 && successfulFiles.every(res => res.qrCodes.length === 0)) {
+            currentError += "QR-кодів не знайдено в жодному з успішно оброблених файлів.";
+        }
+    
+        setError(currentError.trim() || null);
+        setIsLoading(false);
     }, []);
 
     const handleSelectQr = (fileId: string, qrId: string) => {
@@ -120,7 +119,7 @@ const App: React.FC = () => {
         setPreviewImageUrl(null);
 
         try {
-            const isPdf = activeFile.type === 'application/pdf';
+            const isPdf = activeFile.type === 'application/pdf' || activeFile.name.toLowerCase().endsWith('.pdf');
             const url = isPdf
                 ? await generatePreviewPageAsDataUrl(activeFile, activeFileInfo, newUrl, customization)
                 : await generatePreviewImageAsDataUrl(activeFile, activeFileInfo, newUrl, customization);
@@ -150,7 +149,7 @@ const App: React.FC = () => {
         setModifiedFileUrl(null);
 
         try {
-            const isPdf = activeFile.type === 'application/pdf';
+            const isPdf = activeFile.type === 'application/pdf' || activeFile.name.toLowerCase().endsWith('.pdf');
             const url = isPdf
                 ? await replaceQrCodeInPdf(activeFile, activeFileInfo, newUrl, customization)
                 : await replaceQrCodeInImage(activeFile, activeFileInfo, newUrl, customization);
@@ -424,7 +423,7 @@ const App: React.FC = () => {
             </header>
             
             <main className="w-full max-w-7xl flex-grow flex flex-col items-center justify-center">
-                {error && !isLoading && processedFiles.length > 0 && <div className="w-full max-w-4xl p-3 mb-4 text-center text-yellow-300 bg-yellow-900/50 border border-yellow-500 rounded-lg">{error}</div>}
+                {error && !isLoading && <div className="w-full max-w-4xl p-3 mb-4 text-center text-yellow-300 bg-yellow-900/50 border border-yellow-500 rounded-lg">{error}</div>}
                 {renderContent()}
             </main>
             

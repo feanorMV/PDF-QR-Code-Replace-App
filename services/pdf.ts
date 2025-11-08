@@ -21,9 +21,10 @@ export const extractQrCodesFromPdf = async (file: File): Promise<QrCodeInfo[]> =
     throw new Error('PDF processing libraries (pdf.js or ZXing) not loaded.');
   }
   
-  // Initialize with TRY_HARDER hint for more aggressive scanning
+  // Initialize with hints for more aggressive and versatile scanning
   const hints = new Map();
   hints.set(window.ZXing.DecodeHintType.TRY_HARDER, true);
+  hints.set(window.ZXing.DecodeHintType.ALSO_INVERTED, true);
   const codeReader = new window.ZXing.BrowserQRCodeReader(hints);
   
   const fileBuffer = await file.arrayBuffer();
@@ -40,7 +41,7 @@ export const extractQrCodesFromPdf = async (file: File): Promise<QrCodeInfo[]> =
   for (let i = 1; i <= numPages; i++) {
     const page = await pdf.getPage(i);
     // Use a higher scale for better resolution, improving detection accuracy.
-    const scale = 4.0;
+    const scale = 5.0;
     const viewport = page.getViewport({ scale });
     canvas.width = viewport.width;
     canvas.height = viewport.height;
@@ -246,9 +247,10 @@ export const extractQrCodesFromImage = async (file: File): Promise<QrCodeInfo[]>
         throw new Error('Image processing library (ZXing) not loaded.');
     }
     
-    // Initialize with TRY_HARDER hint for more aggressive scanning
+    // Initialize with hints for more aggressive and versatile scanning
     const hints = new Map();
     hints.set(window.ZXing.DecodeHintType.TRY_HARDER, true);
+    hints.set(window.ZXing.DecodeHintType.ALSO_INVERTED, true);
     const codeReader = new window.ZXing.BrowserQRCodeReader(hints);
 
     const image = await loadImageFromFile(file);
