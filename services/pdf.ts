@@ -35,8 +35,8 @@ export const extractQrCodesFromPdf = async (file: File): Promise<QrCodeInfo[]> =
 
   for (let i = 1; i <= numPages; i++) {
     const page = await pdf.getPage(i);
-    // Use a moderate scale; ZXing is quite effective.
-    const scale = 2.0;
+    // Use a higher scale for better resolution, improving detection accuracy.
+    const scale = 3.0;
     const viewport = page.getViewport({ scale });
     canvas.width = viewport.width;
     canvas.height = viewport.height;
